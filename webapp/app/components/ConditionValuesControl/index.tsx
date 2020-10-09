@@ -1,5 +1,5 @@
-import * as React from 'react'
-import * as classnames from 'classnames'
+import React from 'react'
+import classnames from 'classnames'
 import moment, { Moment } from 'moment'
 import OperatorTypes from 'utils/operatorTypes'
 
@@ -233,7 +233,7 @@ export class ConditionValuesControl extends React.PureComponent<IConditionValues
     const { localValues, tagInputting, tagInputValue } = this.state
 
     const tagList = localValues.map((val) => (
-      <Tag key={val.toString()} className={Styles.tag} closable afterClose={this.removeTag(val)}>{val}</Tag>
+      <Tag key={val.toString()} className={Styles.tag} closable onClose={this.removeTag(val)}>{val}</Tag>
     ))
 
     const tagInputControl = []

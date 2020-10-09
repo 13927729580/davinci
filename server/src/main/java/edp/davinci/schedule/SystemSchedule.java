@@ -34,6 +34,8 @@ import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @Component
@@ -54,22 +56,23 @@ public class SystemSchedule {
     @Autowired
     private ShareDownloadRecordMapper shareDownloadRecordMapper;
 
+    private static final ExecutorService CLEAR_TEMPDIR_THREADPOOL = Executors.newFixedThreadPool(3);
 
     @Scheduled(cron = "0 0 1 * * *")
     public void clearTempDir() {
 
         //下载内容文件保留7天，记录保留1月
         String downloadDir = fileUtils.fileBasePath + Consts.DIR_DOWNLOAD + DateUtils.getTheDayBeforAWeekYYYYMMDD();
-        String tempDir = fileUtils.fileBasePath + Consts.DIR_TEMPL + DateUtils.getTheDayBeforNowDateYYYYMMDD();
+        String tempDir = fileUtils.fileBasePath + Consts.DIR_TEMP + DateUtils.getTheDayBeforNowDateYYYYMMDD();
         String csvDir = fileUtils.fileBasePath + File.separator + FileTypeEnum.CSV.getType();
 
         final String download = fileUtils.formatFilePath(downloadDir);
         final String temp = fileUtils.formatFilePath(tempDir);
         final String csv = fileUtils.formatFilePath(csvDir);
 
-        new Thread(() -> FileUtils.deleteDir(new File(download))).start();
-        new Thread(() -> FileUtils.deleteDir(new File(temp))).start();
-        new Thread(() -> FileUtils.deleteDir(new File(csv))).start();
+        CLEAR_TEMPDIR_THREADPOOL.execute(() -> FileUtils.deleteDir(new File(download)));
+        CLEAR_TEMPDIR_THREADPOOL.execute(() -> FileUtils.deleteDir(new File(temp)));
+        CLEAR_TEMPDIR_THREADPOOL.execute(() -> FileUtils.deleteDir(new File(csv)));
     }
 
     @Scheduled(cron = "0 0/2 * * * *")

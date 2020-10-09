@@ -18,196 +18,406 @@
  * >>
  */
 
-import * as React from 'react'
-
-import ShareForm from './ShareForm'
-import { Icon, Input, Button, Row, Col, Radio } from 'antd'
-const RadioButton = Radio.Button
+import React, {
+  useCallback,
+  useState,
+  useMemo,
+  useEffect,
+  ReactElement
+} from 'react'
+import { compose } from 'redux'
+import { Icon, Button, Row, Col, Modal, Select, Radio } from 'antd'
+import { RadioChangeEvent } from 'antd/lib/radio'
+import Ctrl from './Ctrl'
+const SelectOption = Select.Option
 const RadioGroup = Radio.Group
-
-const styles = require('./SharePanel.less')
-
+import { uuid } from 'utils/util'
+import ShareForm from './ShareForm'
+import styles from './SharePanel.less'
+import { Tmode, TShareVizsType, TPermission, IGetTokenParams } from './types'
+import { IProjectRoles } from 'containers/Organizations/component/ProjectRole'
+import { IOrganizationMember } from 'containers/Organizations/types'
+import { debounce } from 'lodash'
 interface ISharePanelProps {
-  id?: number
-  type: string
+  visible: boolean
+  id: number
   itemId?: number
-  active?: string
-  shareInfo: string
-  secretInfo: string
-  shareInfoLoading: boolean
-  authorized: boolean
-  afterAuthorization: () => void
-  onLoadDashboardShareLink?: (id: number, authName: string) => void
-  onLoadWidgetShareLink?: (id: number, itemId: number, authName: string) => void
-  onLoadDisplayShareLink?: (id: number, authName: string) => void
+  type: TShareVizsType
+  title: string
+  shareToken: string
+  pwdToken: string
+  pwd: string
+  authorizedShareToken: string
+  loading: boolean
+  projectRoles: IProjectRoles[]
+  organizationMembers: IOrganizationMember[]
+  onLoadDashboardShareLink?: (params: IGetTokenParams) => void
+  onLoadWidgetShareLink?: (params: IGetTokenParams) => void
+  onLoadDisplayShareLink?: (params: IGetTokenParams) => void
+  onClose: () => void
 }
 
-interface ISharePanelStates {
-  active: string
-  authName: string
-}
+const SharePanel: React.FC<ISharePanelProps> = (props) => {
+  const {
+    id,
+    type,
+    title,
+    itemId,
+    loading,
+    onClose,
+    visible,
+    pwdToken,
+    pwd,
+    shareToken,
+    projectRoles,
+    organizationMembers,
+    authorizedShareToken,
+    onLoadWidgetShareLink,
+    onLoadDisplayShareLink,
+    onLoadDashboardShareLink
+  } = props
+  const [mode, setShareType] = useState<Tmode>('NORMAL')
+  const [permission, setPermission] = useState<TPermission>('SHARER')
+  const [searchValue, setSearchValue] = useState<string>('')
+  const [viewerIds, setViewerIds] = useState<number[]>()
+  const [roles, setRoles] = useState<number[]>()
 
-export class SharePanel extends React.PureComponent<ISharePanelProps, ISharePanelStates> {
-  constructor (props) {
-    super(props)
-    this.state = {
-      active: this.props.active,
-      authName: ''
+  useEffect(() => {
+    if (id && visible && !shareToken) {
+      getShareToken(type, {
+        id,
+        itemId,
+        mode,
+        permission,
+        roles,
+        viewerIds
+      })
     }
-  }
+  }, [
+    id,
+    type,
+    visible,
+    shareToken,
+    itemId,
+    mode,
+    permission,
+    roles,
+    viewerIds
+  ])
 
-  public static defaultProps = {
-    active: 'normal'
-  }
-
-  public componentWillMount () {
-    if (!this.props.shareInfo) {
-      this.getShareInfo('')
+  useEffect(() => {
+    if (id && visible && !pwdToken && mode === 'PASSWORD') {
+      getShareToken(type, {
+        id,
+        itemId,
+        mode,
+        permission,
+        roles,
+        viewerIds
+      })
     }
-  }
+  }, [
+    pwdToken,
+    type,
+    pwd,
+    id,
+    visible,
+    mode,
+    itemId,
+    permission,
+    roles,
+    viewerIds
+  ])
 
-  public componentWillReceiveProps () {
-    this.setState({
-      authName: ''
-    })
-  }
-
-  public componentDidUpdate () {
-    const { shareInfo, shareInfoLoading } = this.props
-    if (!shareInfo && !shareInfoLoading) {
-      this.getShareInfo('')
-    }
-  }
-
-  private getShareInfo = (authName) => {
-    const {
-      id,
-      type,
-      itemId,
-      onLoadDashboardShareLink,
-      onLoadWidgetShareLink,
-      onLoadDisplayShareLink
-    } = this.props
-
-    const name = authName.target
-      ? authName.target.value
-      : authName
-
+  const getShareToken = (type: TShareVizsType, params: IGetTokenParams) => {
     switch (type) {
       case 'dashboard':
-        onLoadDashboardShareLink(id, name)
+        onLoadDashboardShareLink(params)
         break
       case 'widget':
-        onLoadWidgetShareLink(id, itemId, name)
+        onLoadWidgetShareLink(params)
         break
       case 'display':
-        onLoadDisplayShareLink(id, name)
+        onLoadDisplayShareLink(params)
       default:
         break
     }
   }
 
-  private radioChange = (e) => {
-    this.setState({
-      active: e.target.value
-    })
+  const reloadShareToken = () => {
+    getShareToken(type, { id, itemId, mode, permission, roles, viewerIds })
   }
 
-  private creditShare = () => {
-    this.getShareInfo(this.state.authName)
-    this.props.afterAuthorization()
+  const afterModalClose = () => {
+    setShareType('NORMAL')
   }
 
-  private authNameChange = (event) => {
-    this.setState({authName: event.target.value})
+  const requestToken = () => {
+    getShareToken(type, { id, itemId, mode, permission, roles, viewerIds })
   }
 
-  public render () {
-    const {
-      type,
-      shareInfo,
-      secretInfo,
-      shareInfoLoading,
-      authorized
-    } = this.props
+  const Regular: ReactElement = useMemo(() => {
+    return shareToken ? (
+      <ShareForm type={type} shareToken={shareToken} />
+    ) : (
+      <Button size="small" onClick={reloadShareToken}>
+        点击重新加载
+      </Button>
+    )
+  }, [id, itemId, type, shareToken])
 
-    const {
-      active,
-      authName
-    } = this.state
+  const Pwd: ReactElement = useMemo(() => {
+    return pwdToken ? (
+      <ShareForm type={type} shareToken={pwdToken} pwd={pwd} />
+    ) : (
+      <Button size="small" onClick={reloadShareToken}>
+        点击重新加载
+      </Button>
+    )
+  }, [id, itemId, type, pwd, pwdToken])
 
-    const segmentControl = (
-      <div className={styles.panelHead}>
-        <RadioGroup defaultValue={active} onChange={this.radioChange}>
-          <RadioButton value="normal">普通分享</RadioButton>
-          <RadioButton value="secret">授权分享</RadioButton>
-        </RadioGroup>
-      </div>
-      )
+  const AuthOptions = useMemo(() => {
+    const roles = compose(
+      setRoleOptions,
+      getOrgRoleBySearch
+    )(projectRoles || [])
+    const viewerIds = compose(
+      setMemberOptions,
+      getOrgMembersBysearch
+    )(organizationMembers || [])
 
-    let content
-    let secretContent
+    return sliceLength(100, roles, viewerIds)()
 
-    if (shareInfo) {
-      content = (
-        <ShareForm
-          type={type}
-          shareInfo={shareInfo}
-        />
-      )
-    } else {
-      if (shareInfoLoading) {
-        content = (<Icon type="loading" />)
-      } else {
-        content = (<Button size="small" onClick={this.getShareInfo}>点击重新加载</Button>)
+    function sliceLength<T, U>(length: number, arr1: T[], arr2: U[]) {
+      let loop = true
+      return () => {
+        return new Array(length)
+          .fill(0)
+          .map(() => {
+            if (loop) {
+              loop = false
+              return arr1.length ? arr1.shift() : arr2.shift()
+            } else {
+              loop = true
+              return arr2.length ? arr2.shift() : arr1.shift()
+            }
+          })
+          .filter((unEmpty) => unEmpty)
       }
     }
 
-    if (secretInfo && authorized) {
-      secretContent = (
-        <ShareForm
-          type={type}
-          shareInfo={secretInfo}
-        />
+    function getOrgMembersBysearch(
+      orgMembers: IOrganizationMember[]
+    ): IOrganizationMember[] {
+      return orgMembers.filter((member: IOrganizationMember) => {
+        return searchValue && searchValue.length
+          ? member?.user?.username?.indexOf(searchValue.trim()) > -1
+          : member
+      })
+    }
+
+    function getOrgRoleBySearch(orgRoles: IProjectRoles[]): IProjectRoles[] {
+      return orgRoles.filter((role: IProjectRoles) => {
+        return searchValue && searchValue.length
+          ? role && role.name.indexOf(searchValue.trim()) > -1
+          : role
+      })
+    }
+
+    function setRoleOptions(orgRoles: IProjectRoles[]): ReactElement[] {
+      return orgRoles && orgRoles.length
+        ? orgRoles.map((role: IProjectRoles) => (
+            <SelectOption
+              key={`${uuid}${role.name}`}
+              value={`roles-${role.id}`}
+            >
+              <div className={styles.options}>
+                <strong>角色</strong> -
+                <span className={styles.name}>{role.name}</span>
+              </div>
+            </SelectOption>
+          ))
+        : []
+    }
+
+    function setMemberOptions(
+      orgMembers: IOrganizationMember[]
+    ): ReactElement[] {
+      return orgMembers && orgMembers.length
+        ? orgMembers.map((member: IOrganizationMember) => (
+            <SelectOption
+              key={`${uuid}${member.user.username}`}
+              value={`viewerIds-${member.user.id}`}
+            >
+              <div className={styles.options}>
+                <strong>用户</strong> -
+                <span className={styles.name}>
+                  {member.user.username}
+                  {member.user.email}
+                </span>
+              </div>
+            </SelectOption>
+          ))
+        : []
+    }
+  }, [searchValue, projectRoles, organizationMembers])
+
+  const debouncedSearch = useCallback(
+    debounce((searchValue: string) => {
+      setSearchValue(searchValue)
+    }, 500),
+    [searchValue]
+  )
+
+  const save = useCallback(
+    (vals: string[]) => {
+      const wrapper: { viewerIds: number[]; roles: number[] } = vals.reduce(
+        (iteratee, target) => {
+          const [key, value] = target.split('-')
+          iteratee[key].push(Number(value))
+          return iteratee
+        },
+        { viewerIds: [], roles: [] }
       )
+      setViewerIds(wrapper.viewerIds)
+      setRoles(wrapper.roles)
+    },
+    [viewerIds, roles]
+  )
+
+  const change = useCallback(
+    (val) => {
+      save(val)
+    },
+    [viewerIds, roles]
+  )
+
+  const changePermission = (event: RadioChangeEvent) => {
+    setPermission(event.target.value)
+  }
+
+  const authButton = useMemo(() => {
+    const isAuthorizedCanSend: boolean = !(roles?.length || viewerIds?.length)
+    return (
+      <Button
+        type="primary"
+        disabled={isAuthorizedCanSend}
+        className={styles.authButton}
+        onClick={requestToken}
+      >
+        确定
+      </Button>
+    )
+  }, [id, itemId, mode, permission, roles, viewerIds, type])
+
+  const Auth: ReactElement = useMemo(() => {
+    if (authorizedShareToken) {
+      return <ShareForm type={type} shareToken={authorizedShareToken} />
     } else {
-      if (shareInfoLoading) {
-        secretContent = (<Icon type="loading" />)
-      } else {
-        secretContent = (
+      return (
+        <>
           <Row gutter={8} className={styles.shareRow}>
             <Col span={24}>
-              <Input
-                className={styles.shareInput}
-                placeholder="请输入要分享的用户名"
-                onChange={this.authNameChange}
-                value={authName}
-                addonAfter={
-                  <span
-                    style={{cursor: 'pointer'}}
-                    onClick={this.creditShare}
-                  >
-                    确定
-                  </span>
-                }
-              />
+              <Select
+                key={`${uuid}select`}
+                style={{ width: '100%' }}
+                showSearch
+                mode="multiple"
+                onSearch={debouncedSearch}
+                onChange={change}
+                placeholder="输入关键字查询角色或用户"
+                filterOption={false}
+              >
+                {AuthOptions}
+              </Select>
             </Col>
           </Row>
-        )
-      }
+          <Row type="flex" justify="space-between">
+            <Col span={20}>
+              <RadioGroup
+                defaultValue={permission}
+                onChange={changePermission}
+                className={styles.authRadio}
+              >
+                <Radio key="SHARER" value="SHARER">
+                  分享者权限
+                </Radio>
+                <Radio key="VIEWER" value="VIEWER">
+                  被分享者权限
+                </Radio>
+              </RadioGroup>
+            </Col>
+            <Col span={4}>{authButton}</Col>
+          </Row>
+        </>
+      )
     }
+  }, [
+    id,
+    itemId,
+    shareToken,
+    type,
+    permission,
+    mode,
+    roles,
+    viewerIds,
+    AuthOptions,
+    authorizedShareToken
+  ])
 
-    return (
+  const Content = useMemo(() => {
+    if (loading) {
+      return <Icon type="loading" />
+    }
+    switch (mode) {
+      case 'NORMAL':
+        return Regular
+      case 'AUTH':
+        return Auth
+      case 'PASSWORD':
+        return Pwd
+      default:
+        return Regular
+    }
+  }, [
+    id,
+    itemId,
+    permission,
+    type,
+    loading,
+    mode,
+    roles,
+    viewerIds,
+    AuthOptions
+  ])
+
+  const setSType = useCallback(
+    (val: Tmode) => {
+      if (val === 'AUTH') {
+        setViewerIds([])
+        setRoles([])
+      }
+      setShareType(val)
+    },
+    [setShareType, mode, roles, type, viewerIds]
+  )
+
+  return (
+    <Modal
+      title={`分享-${title}`}
+      visible={visible}
+      wrapClassName="ant-modal-small"
+      footer={false}
+      onCancel={onClose}
+      afterClose={afterModalClose}
+      destroyOnClose
+    >
       <div className={styles.sharePanel}>
-        {segmentControl}
-        <div className={styles.panelContent}>
-          {
-            active === 'normal' ? content : secretContent
-          }
-        </div>
+        <Ctrl mode={mode} setSType={setSType} />
+        <div className={styles.panelContent}>{Content}</div>
       </div>
-    )
-  }
+    </Modal>
+  )
 }
 
 export default SharePanel

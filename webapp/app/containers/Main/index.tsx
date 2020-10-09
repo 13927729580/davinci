@@ -27,7 +27,7 @@ import { createStructuredSelector } from 'reselect'
 
 import Navigator from 'components/Navigator'
 
-import { logged, logout, getLoginUser, loadDownloadList } from '../App/actions'
+import { logged, logout, loadDownloadList, externalAuthlogout } from '../App/actions'
 import { makeSelectLogged, makeSelectNavigator } from '../App/selectors'
 import { DOWNLOAD_LIST_POLLING_FREQUENCY } from 'app/globalConstants'
 
@@ -58,7 +58,7 @@ interface IMainProps {
   navigator: boolean
   onLogged: (user) => void
   onLogout: () => void
-  onGetLoginUser: (resolve: () => void) => any
+  onExternalAuthLogout: () => void
   onLoadDownloadList: () => void
 }
 
@@ -87,8 +87,9 @@ export class Main extends React.Component<
   }
 
   private logout = () => {
-    const { history, onLogout } = this.props
+    const { history, onLogout , onExternalAuthLogout } = this.props
     onLogout()
+    onExternalAuthLogout()
     history.replace('/login')
   }
 
@@ -199,7 +200,7 @@ export function mapDispatchToProps(dispatch) {
   return {
     onLogged: (user) => dispatch(logged(user)),
     onLogout: () => dispatch(logout()),
-    onGetLoginUser: (resolve) => dispatch(getLoginUser(resolve)),
+    onExternalAuthLogout: () => dispatch(externalAuthlogout()),
     onLoadDownloadList: () => dispatch(loadDownloadList())
   }
 }

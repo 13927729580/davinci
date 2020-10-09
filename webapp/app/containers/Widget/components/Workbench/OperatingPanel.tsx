@@ -1,11 +1,12 @@
 import React from 'react'
 import classnames from 'classnames'
 import set from 'lodash/set'
+import debounce from 'lodash/debounce'
 
 import widgetlibs from '../../config'
-import { IDataRequestParams } from 'app/containers/Dashboard/Grid'
-import { IViewBase, IFormedView } from 'containers/View/types'
-import { ViewModelVisualTypes } from 'containers/View/constants'
+import { IDataRequestBody } from 'app/containers/Dashboard/types'
+import { IViewBase, IFormedViews, IView } from 'containers/View/types'
+import { ViewModelVisualTypes, ViewModelTypes } from 'containers/View/constants'
 import Dropbox, { DropboxType, DropType, AggregatorType, IDataParamSource, IDataParamConfig, DragType, IDragItem} from './Dropbox'
 import { IWidgetProps, IChartStyles, IChartInfo, IPaginationParams, WidgetMode, RenderType, DimetionType } from '../Widget'
 import { IFieldConfig, getDefaultFieldConfig, FieldConfigModal } from '../Config/Field'
@@ -14,38 +15,39 @@ import { IFieldSortConfig, FieldSortTypes, SortConfigModal } from '../Config/Sor
 import ColorSettingForm from './ColorSettingForm'
 import ActOnSettingForm from './ActOnSettingForm'
 import FilterSettingForm from './FilterSettingForm'
-import VariableConfigForm from '../VariableConfigForm'
-import ControlConfig from './ControlConfig'
+import LocalControlConfig from 'app/components/Control/Config'
+import ReferenceConfigModal from './Reference'
 import ComputedConfigForm from '../ComputedConfigForm'
 import ChartIndicator from './ChartIndicator'
-import AxisSection, { IAxisConfig } from './ConfigSections/AxisSection'
-import SplitLineSection, { ISplitLineConfig } from './ConfigSections/SplitLineSection'
-import PivotSection, { IPivotConfig } from './ConfigSections/PivotSection'
-import SpecSection, { ISpecConfig } from './ConfigSections/SpecSection'
-import LabelSection, { ILabelConfig } from './ConfigSections/LabelSection'
-import LegendSection, { ILegendConfig } from './ConfigSections/LegendSection'
-import VisualMapSection, { IVisualMapConfig } from './ConfigSections/VisualMapSection'
-import ToolboxSection, { IToolboxConfig } from './ConfigSections/ToolboxSection'
-import DoubleYAxisSection, { IDoubleYAxisConfig } from './ConfigSections/DoubleYAxisSection'
-import AreaSelectSection, { IAreaSelectConfig } from './ConfigSections/AreaSelectSection'
-import ScorecardSection, { IScorecardConfig } from './ConfigSections/ScorecardSection'
-import IframeSection, { IframeConfig } from './ConfigSections/IframeSection'
+import AxisSection from './ConfigSections/AxisSection'
+import SplitLineSection from './ConfigSections/SplitLineSection'
+import PivotSection from './ConfigSections/PivotSection'
+import SpecSection from './ConfigSections/SpecSection'
+import LabelSection from './ConfigSections/LabelSection'
+import LegendSection from './ConfigSections/LegendSection'
+import VisualMapSection from './ConfigSections/VisualMapSection'
+import ToolboxSection from './ConfigSections/ToolboxSection'
+import DoubleYAxisSection from './ConfigSections/DoubleYAxisSection'
+import AreaSelectSection from './ConfigSections/AreaSelectSection'
+import ScorecardSection from './ConfigSections/ScorecardSection'
+import IframeSection from './ConfigSections/IframeSection'
 import TableSection from './ConfigSections/TableSection'
 import GaugeSection from './ConfigSections/GaugeSection'
-import { ITableConfig } from '../Config/Table'
 import BarSection from './ConfigSections/BarSection'
 import RadarSection from './ConfigSections/RadarSection'
 import { encodeMetricName, decodeMetricName, getPivot, getTable, getPivotModeSelectedCharts, checkChartEnable } from '../util'
 import { PIVOT_DEFAULT_SCATTER_SIZE_TIMES } from 'app/globalConstants'
 import PivotTypes from '../../config/pivot/PivotTypes'
-import { uuid } from 'utils/util'
 
 import { RadioChangeEvent } from 'antd/lib/radio'
-import { Row, Col, Icon, Menu, Radio, InputNumber, Dropdown, Modal, Popconfirm, Checkbox, notification, Tooltip, Select } from 'antd'
-import { IDistinctValueReqeustParams } from 'app/components/Filters/types'
+import { Row, Col, Icon, Menu, Radio, InputNumber, Dropdown, Modal, Popconfirm, Checkbox, notification, Tooltip, Select, message } from 'antd'
+import { IDistinctValueReqeustParams, IControl } from 'app/components/Control/types'
+import { IReference } from './Reference/types'
+import { REFERENCE_SUPPORTED_CHART_TYPES } from './Reference/constants'
 import { WorkbenchQueryMode } from './types'
 import { CheckboxChangeEvent } from 'antd/lib/checkbox'
-import { SelectProps } from 'antd/lib/select'
+import { filterSelectOption } from 'app/utils/util'
+import { ControlPanelTypes, ControlQueryMode } from 'app/components/Control/constants'
 const MenuItem = Menu.Item
 const RadioButton = Radio.Button
 const RadioGroup = Radio.Group
@@ -69,20 +71,24 @@ export interface IDataParams {
 
 interface IOperatingPanelProps {
   views: IViewBase[]
+  formedViews: IFormedViews
+  selectedViewId: number
   originalWidgetProps: IWidgetProps
-  selectedView: IFormedView
-  distinctColumnValues: any[]
-  columnValueLoading: boolean
   controls: any[]
+  controlQueryMode: ControlQueryMode,
+  references: IReference[]
+  limit: number
   cache: boolean
   autoLoadData: boolean
   expired: number
-  queryMode: WorkbenchQueryMode
+  workbenchQueryMode: WorkbenchQueryMode
   multiDrag: boolean
   computed: any[]
   originalComputed: any[]
   onViewSelect: (viewId: number) => void
-  onSetControls: (controls: any[]) => void
+  onSetControls: (controls: IControl[], queryMode: ControlQueryMode) => void
+  onSetReferences: (references: IReference[]) => void
+  onLimitChange: (value) => void
   onCacheChange: (e: RadioChangeEvent) => void
   onChangeAutoLoadData: (e: RadioChangeEvent) => void
   onExpiredChange: (expired: number) => void
@@ -91,11 +97,18 @@ interface IOperatingPanelProps {
   onSetWidgetProps: (widgetProps: IWidgetProps) => void
   onLoadData: (
     viewId: number,
-    requestParams: IDataRequestParams,
+    requestParams: IDataRequestBody,
     resolve: (data) => void,
     reject: (error) => void
   ) => void
-  onLoadDistinctValue: (viewId: number, params: Partial<IDistinctValueReqeustParams>) => void
+  onLoadColumnDistinctValue: (
+    paramsByViewId: {
+      [viewId: string]: Omit<IDistinctValueReqeustParams, 'cache' | 'expired'>
+    },
+    callback: (options?: object[]) => void
+  ) => void
+  onLoadViews: (resolve?: () => void) => void
+  onLoadViewDetail: (viewIds: number[], resolve?: (views: IView[]) => void) => void
 }
 
 interface IOperatingPanelStates {
@@ -112,6 +125,7 @@ interface IOperatingPanelStates {
   modalCachedData: IDataParamSource
   modalCallback: (data: boolean | IDataParamConfig) => void
   modalDataFrom: string
+  distinctColumnValues: string[]
 
   currentEditingCommonParamKey: string
   currentEditingItem: IDataParamSource
@@ -125,6 +139,7 @@ interface IOperatingPanelStates {
   actOnModalList: IDataParamSource[]
   filterModalVisible: boolean
   controlConfigVisible: boolean
+  referenceConfigVisible: boolean
 
   categoryDragItems: IDragItem[],
   valueDragItems: IDragItem[],
@@ -153,6 +168,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
       modalCachedData: null,
       modalCallback: null,
       modalDataFrom: '',
+      distinctColumnValues: [],
       currentEditingCommonParamKey: '',
       currentEditingItem: null,
       fieldModalVisible: false,
@@ -163,6 +179,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
       actOnModalList: null,
       filterModalVisible: false,
       controlConfigVisible: false,
+      referenceConfigVisible: false,
       categoryDragItems: [],
       valueDragItems: [],
       computedConfigModalVisible: false,
@@ -182,10 +199,8 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
   private actOnSettingForm = null
   private filterSettingForm = null
 
-  private variableConfigForm = null
   private computedConfigForm = null
   private refHandlers = {
-    variableConfigForm: (ref) => this.variableConfigForm = ref,
     computedConfigForm: (ref) => this.computedConfigForm = ref
   }
 
@@ -196,8 +211,9 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
   }
 
   public componentWillReceiveProps (nextProps: IOperatingPanelProps) {
-    const { selectedView, originalWidgetProps } = nextProps
-    if (selectedView && selectedView !== this.props.selectedView) {
+    const { formedViews, selectedViewId, originalWidgetProps } = nextProps
+    if (selectedViewId && selectedViewId !== this.props.selectedViewId) {
+      const selectedView = formedViews[selectedViewId]
       const model = selectedView.model
       const categoryDragItems = []
       const valueDragItems = []
@@ -226,13 +242,16 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
       })
     }
 
-    if ((originalWidgetProps && selectedView) &&
-      (originalWidgetProps !== this.props.originalWidgetProps || selectedView !== this.props.selectedView)) {
+    if ((originalWidgetProps && selectedViewId) &&
+      (originalWidgetProps !== this.props.originalWidgetProps || selectedViewId !== this.props.selectedViewId)) {
+      const selectedView = formedViews[selectedViewId]
       const { cols, rows, metrics, secondaryMetrics, filters, color, label, size, xAxis, tip, chartStyles, mode, selectedChart } = originalWidgetProps
       const { dataParams } = this.state
       const model = selectedView.model
       const currentWidgetlibs = widgetlibs[mode || 'pivot'] // FIXME 兼容 0.3.0-beta.1 之前版本
-
+      if (mode === 'pivot') {
+        model['指标名称']   = ({sqlType: 'VARCHAR', visualType: ViewModelVisualTypes.String, modelType: ViewModelTypes.Category})
+      }
       cols.forEach((c) => {
         const modelColumn = model[c.name]
         if (modelColumn) {
@@ -443,7 +462,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
   }
 
   private beforeDrop = (name, cachedItem, resolve) => {
-    const { selectedView, onLoadDistinctValue } = this.props
+    const { selectedViewId, onLoadColumnDistinctValue } = this.props
     const { mode, dataParams } = this.state
     const { metrics } = dataParams
 
@@ -458,7 +477,12 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
     switch (name) {
       case 'filters':
         if (cachedItem.visualType !== 'number' && cachedItem.visualType !== 'date') {
-          onLoadDistinctValue(selectedView.id, { columns: [cachedItem.name] })
+          onLoadColumnDistinctValue(
+            { [selectedViewId]: { columns: [cachedItem.name] } },
+            (results) => {
+              this.getColumnDistinctValueText(results, cachedItem.name)
+            }
+          )
         }
         this.setState({
           modalCachedData: cachedItem,
@@ -468,7 +492,12 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
         })
         break
       case 'color':
-        onLoadDistinctValue(selectedView.id, { columns: [cachedItem.name] })
+        onLoadColumnDistinctValue(
+          { [selectedViewId]: { columns: [cachedItem.name] } },
+          (results) => {
+            this.getColumnDistinctValueText(results, cachedItem.name)
+          }
+        )
         this.setState({
           modalCachedData: cachedItem,
           modalCallback: resolve,
@@ -591,6 +620,12 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
     this.setWidgetProps(dataParams, styleParams)
   }
 
+  private getColumnDistinctValueText = (results, column) => {
+    this.setState({
+      distinctColumnValues: results.map((r) => r[column])
+    })
+  }
+
   private toggleRowsAndCols = () => {
     const { dataParams, styleParams } = this.state
     const { cols, rows } = dataParams
@@ -633,8 +668,13 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
       prop.items = [...prop.items]
       this.setWidgetProps(dataParams, styleParams)
     } else {
-      const { selectedView, onLoadDistinctValue } = this.props
-      onLoadDistinctValue(selectedView.id, { columns: [item.name] })
+      const { selectedViewId, onLoadColumnDistinctValue } = this.props
+      onLoadColumnDistinctValue(
+        { [selectedViewId]: { columns: [item.name] } },
+        (results) => {
+          this.getColumnDistinctValueText(results, item.name)
+        }
+      )
       this.setState({
         currentEditingCommonParamKey: from,
         currentEditingItem: item,
@@ -730,9 +770,14 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
   }
 
   private dropboxItemChangeColorConfig = (item: IDataParamSource) => {
-    const { selectedView, onLoadDistinctValue } = this.props
+    const { selectedViewId, onLoadColumnDistinctValue } = this.props
     const { dataParams, styleParams } = this.state
-    onLoadDistinctValue(selectedView.id, { columns: [item.name] })
+    onLoadColumnDistinctValue(
+      { [selectedViewId]: { columns: [item.name] } },
+      (results) => {
+        this.getColumnDistinctValueText(results, item.name)
+      }
+    )
     this.setState({
       modalCachedData: item,
       modalDataFrom: 'color',
@@ -755,10 +800,15 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
   }
 
   private dropboxItemChangeFilterConfig = (item: IDataParamSource) => {
-    const { selectedView, onLoadDistinctValue } = this.props
+    const { selectedViewId, onLoadColumnDistinctValue } = this.props
     const { dataParams, styleParams } = this.state
     if (item.type === 'category') {
-      onLoadDistinctValue(selectedView.id, { columns: [item.name] })
+      onLoadColumnDistinctValue(
+        { [selectedViewId]: { columns: [item.name] } },
+        (results) => {
+          this.getColumnDistinctValueText(results, item.name)
+        }
+      )
     }
     this.setState({
       modalCachedData: item,
@@ -798,7 +848,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
         pageNo,
         pageSize
       },
-      queryMode: WorkbenchQueryMode.Immediately,
+      workbenchQueryMode: WorkbenchQueryMode.Immediately,
       orders
     })
   }
@@ -808,7 +858,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
     this.setWidgetProps(dataParams, styleParams, {
       renderType: 'rerender',
       updatedPagination: pagination,
-      queryMode: WorkbenchQueryMode.Immediately
+      workbenchQueryMode: WorkbenchQueryMode.Immediately
     })
   }
 
@@ -818,21 +868,25 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
     options?: {
       renderType?: RenderType,
       updatedPagination?: IPaginationParams,
-      queryMode?: WorkbenchQueryMode,
-      orders?
+      workbenchQueryMode?: WorkbenchQueryMode,
+      orders?,
+      limit?
     }
   ) => {
     const { cols, rows, metrics, secondaryMetrics, filters, color, label, size, xAxis, tip, yAxis } = dataParams
-    const { selectedView, onLoadData, onSetWidgetProps } = this.props
+    const { formedViews, selectedViewId, onLoadData, onSetWidgetProps } = this.props
     const { mode, chartModeSelectedChart, pagination } = this.state
+    const selectedView = formedViews[selectedViewId]
     let renderType
     let updatedPagination
-    let queryMode = this.props.queryMode
+    let workbenchQueryMode = this.props.workbenchQueryMode
 
     if (options) {
       renderType = options.renderType
       updatedPagination = options.updatedPagination
-      queryMode = WorkbenchQueryMode[options.queryMode] ? options.queryMode : queryMode
+      workbenchQueryMode = WorkbenchQueryMode[options.workbenchQueryMode]
+        ? options.workbenchQueryMode
+        : workbenchQueryMode
     }
 
     const fromPagination = !!updatedPagination
@@ -966,6 +1020,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
       pageNo: updatedPagination.pageNo,
       pageSize: updatedPagination.pageSize,
       nativeQuery: noAggregators,
+      limit: options?.limit || this.props.limit,
       cache: false,
       expired: 0,
       flush: false
@@ -979,13 +1034,13 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
 
     const requestParamString = JSON.stringify(requestParams)
     const needRequest = (groups.length > 0 || aggregators.length > 0)
-                       && selectedView
+                       && selectedViewId
                        && requestParamString !== this.lastRequestParamString
-                       && queryMode === WorkbenchQueryMode.Immediately
+                       && workbenchQueryMode === WorkbenchQueryMode.Immediately
 
     if (needRequest) {
       this.lastRequestParamString = requestParamString
-      onLoadData(selectedView.id, requestParams, (result) => {
+      onLoadData(selectedViewId, requestParams, (result) => {
         const { resultList: data, pageNo, pageSize, totalCount } = result
         updatedPagination = !updatedPagination.withPaging ? updatedPagination : {
           ...updatedPagination,
@@ -1169,9 +1224,6 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
     }
   }
 
-  private filterView: SelectProps['filterOption'] = (input, option) =>
-    (option.props.children as string).toLowerCase().includes(input.toLowerCase())
-
   private changeMode = (e) => {
     const mode = e.target.value
     const { dataParams } = this.state
@@ -1284,6 +1336,16 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
     this.setWidgetProps(dataParams, styleParams, { renderType })
   }
 
+  private limitChange = (value) => {
+    this.props.onLimitChange(value)
+    this.debounceLimitChangeUpdate(value)
+  }
+
+  private debounceLimitChangeUpdate = debounce((limit) => {
+    const { dataParams, styleParams } = this.state
+    this.setWidgetProps(dataParams, styleParams, { limit })
+  }, 500)
+
   private confirmColorModal = (config) => {
     this.state.modalCallback(config)
     this.closeColorModal()
@@ -1372,9 +1434,26 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
     })
   }
 
-  private saveControls = (controls) => {
-    this.props.onSetControls(controls)
+  private showReferenceConfig = () => {
+    this.setState({
+      referenceConfigVisible: true
+    })
+  }
+
+  private closeReferenceConfig = () => {
+    this.setState({
+      referenceConfigVisible: false
+    })
+  }
+
+  private saveControls = (controls: IControl[], queryMode: ControlQueryMode) => {
+    this.props.onSetControls(controls, queryMode)
     this.closeControlConfig()
+  }
+
+  private saveReferences = (references: IReference[]) => {
+    this.props.onSetReferences(references)
+    this.closeReferenceConfig()
   }
 
   private checkAllDragItem = (type: DragType) => (e: CheckboxChangeEvent) => {
@@ -1495,20 +1574,24 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
   public render () {
     const {
       views,
-      selectedView,
-      distinctColumnValues,
-      columnValueLoading,
+      formedViews,
+      selectedViewId,
       controls,
+      controlQueryMode,
+      references,
+      limit,
       cache,
       autoLoadData,
       expired,
-      queryMode,
+      workbenchQueryMode,
       multiDrag,
       computed,
       onCacheChange,
       onChangeAutoLoadData,
       onExpiredChange,
-      originalWidgetProps,
+      onLoadColumnDistinctValue,
+      onLoadViews,
+      onLoadViewDetail,
       originalComputed
     } = this.props
     const {
@@ -1522,6 +1605,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
       styleParams,
       modalCachedData,
       modalDataFrom,
+      distinctColumnValues,
       fieldModalVisible,
       formatModalVisible,
       sortModalVisible,
@@ -1531,12 +1615,14 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
       actOnModalList,
       filterModalVisible,
       controlConfigVisible,
+      referenceConfigVisible,
       valueDragItems,
       computedConfigModalVisible,
       selectedComputed
     } = this.state
 
-    const widgetPropsModel = selectedView && selectedView.model ? selectedView.model : {}
+    const selectedView = formedViews[selectedViewId]
+    const widgetPropsModel = selectedView?.model || {}
 
     const { metrics } = dataParams
     const [dimetionsCount, metricsCount] = this.getDimetionsAndMetricsCount()
@@ -1779,6 +1865,36 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
                 </span>
               </h4>
             </div>
+            {mode === 'chart' &&
+              REFERENCE_SUPPORTED_CHART_TYPES.includes(
+                chartModeSelectedChart.id
+              ) && (
+                <div className={styles.paneBlock}>
+                  <h4>
+                    <span>参考线</span>
+                    <span
+                      className={styles.addVariable}
+                      onClick={this.showReferenceConfig}
+                    >
+                      <Icon type="edit" /> 点击配置
+                    </span>
+                  </h4>
+                </div>
+              )}
+            <div className={styles.paneBlock}>
+              <h4>展示数据量</h4>
+              <div className={styles.blockBody}>
+                <Row gutter={8} type="flex" align="middle" className={styles.blockRow}>
+                  <Col span={24}>
+                    <InputNumber
+                      min={0}
+                      value={limit}
+                      onChange={this.limitChange}
+                    />
+                  </Col>
+                </Row>
+              </div>
+            </div>
             <div className={styles.paneBlock}>
               <h4>开启缓存</h4>
               <div className={styles.blockBody}>
@@ -1867,7 +1983,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
               dropdownMatchSelectWidth={false}
               value={selectedView && selectedView.id}
               onChange={this.viewSelect}
-              filterOption={this.filterView}
+              filterOption={filterSelectOption}
             >
               {(views || []).map(({ id, name }) => <Option key={id} value={id}>{name}</Option>)}
             </Select>
@@ -1995,7 +2111,7 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
             ))}
           </div>
           {
-            queryMode === WorkbenchQueryMode.Manually && (
+            workbenchQueryMode === WorkbenchQueryMode.Manually && (
               <div className={styles.manualQuery} onClick={this.forceSetWidgetProps}>
                 <Icon type="caret-right" />查询
               </div>
@@ -2016,7 +2132,6 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
           <ColorSettingForm
             mode={mode}
             list={distinctColumnValues}
-            loading={columnValueLoading}
             metrics={metrics.items}
             config={colorSettingConfig}
             onSave={this.confirmColorModal}
@@ -2057,12 +2172,26 @@ export class OperatingPanel extends React.Component<IOperatingPanelProps, IOpera
             ref={(f) => this.filterSettingForm = f}
           />
         </Modal>
-        <ControlConfig
-          currentControls={controls}
-          view={selectedView}
+        <LocalControlConfig
+          type={ControlPanelTypes.Local}
+          originalControls={controls}
+          relatedViewId={selectedViewId}
+          views={views}
+          formedViews={formedViews}
           visible={controlConfigVisible}
+          queryMode={controlQueryMode}
           onSave={this.saveControls}
           onCancel={this.closeControlConfig}
+          onLoadViews={onLoadViews}
+          onLoadViewDetail={onLoadViewDetail}
+          onGetOptions={onLoadColumnDistinctValue}
+        />
+        <ReferenceConfigModal
+          references={references}
+          metrics={metrics.items}
+          visible={referenceConfigVisible}
+          onSave={this.saveReferences}
+          onCancel={this.closeReferenceConfig}
         />
         {!currentEditingItem ? null : [(
           <FieldConfigModal
